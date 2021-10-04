@@ -1,6 +1,11 @@
 # -*- coding: utf-8 -*-
 
+print("Make today a great day!")
+
 GPU_STR = "0,1,2,3"
+
+TRAINING_DATA = '/array1/data/front_row_data/training'
+TESTING_DATA = '/array1/data/front_row_data/testing'
 
 import os
 from sys import platform
@@ -8,7 +13,6 @@ import random
 import code
 import shutil
 
-from collections import Counter
 from functools import reduce
 
 getwd = os.getcwd
@@ -94,9 +98,6 @@ def groupr(iterable, n, padvalue=None):
   "groupr(3, 'abcdefg', 'x') --> ('a','b','c'), ('d','e','f'), ('g','x','x')"
   return list(zip_longest(*[iter(iterable)]*n, fillvalue=padvalue))
 
-def groupl(iterable, n, padvalue=None):
-  "groupl(3, 'abcdefg', 'x') --> ('a','b','c'), ('d','e','f'), ('g','x','x')"
-  return list(zip_longest(*[iter(iterable)]*n, fillvalue=padvalue))
 
 ##############################################################################
 # Environment Management                                                     #
@@ -125,14 +126,12 @@ def env(**kwargs):
     return Namespace(**kwargs)
 environment = env
 
-DEV_COUNT = 0
-try:
-    import pynvml as N
-    N.nvmlInit()
-    DEV_COUNT = N.nvmlDeviceGetCount()
-except:
-    print("Could not import `pynvml`")
 
+import pynvml as N
+
+N.nvmlInit()
+
+DEV_COUNT = N.nvmlDeviceGetCount()
 MB = 1024 * 1024
 
 gpus = nvidia = nvidia_smi = lambda: os.system('nvidia-smi')
@@ -197,6 +196,19 @@ def get_based_gpu_idx():
 def set_based_gpu():
     idx = get_based_gpu_idx()
     set_gpu_tf(str(idx))
+
+
+# inp = input("Do you wish to select GPUs and import tensorflow? (y/n)\n>> ")
+# if inp.lower() in ['y', 'yes', 'ye', 'yee']:
+# set_min_gpu()
+try:
+    pass
+    # set_based_gpu()
+    # gpu_str = GPU_STR #input("Enter GPU slots for tensorflow to see:\n>> ")
+    # max_mem = "" #input("Enter GPU max memory (mB). Leave blank if none desired:\n>> ")
+    # set_gpu_tf(gpu_str, int(max_mem) if max_mem != "" else None)
+except:
+    print("Could not configure GPU devices for tensorflow...")
 
 def add_to_namespace(x, **kwargs):
     if not hasattr(x, '__dict__'):
@@ -264,11 +276,7 @@ def on_linux():
 def on_mac():
     return which_os() == "macOS"
 
-def read_pickle(path):
-    f = open(path, 'rb')
-    x = pickle.load(f)
-    f.close()
-    return x
+
 
 ##############################################################################
 # Prompts                                                                    #
@@ -408,60 +416,10 @@ def sort_dict2(d, by='key', rev=False):
 ##############################################################################
 # List utilities                                                             #
 ##############################################################################
-try:
-    import sklearn as skl
-    from sklearn.model_selection import train_test_split as sklearn_split
-    
-    def shuffle_npz(xs, ys):
-        idx2tgt = dict(zip(list(range(len(xs))), ys))
-        df = pd.DataFrame({'index': list(idx2tgt), 'target': idx2tgt.values()})
-        df = sklearn_shuffle(df, random_state=FLAGS['random_seed'])
-        new_x = np.stack(df['index'].apply(lambda i: xs[i]).values)
-        new_y = np.stack(df['index'].apply(lambda i: ys[i]).values)
-        del xs, ys
-        return new_x, new_y
-except:
-    print("Could not load `sklearn`")
 
-def slice_sequence_examples(sequence, 
-                            num_steps, 
-                            y, 
-                            stride, 
-                            num_classes,
-                            normalize=False,
-                            verbose=False):
-    xs, ys = [], []
-    # Get integer number of window samples
-    # number of strides in a window + 1 to ensure it rounds up
-    n = num_steps//stride + 1 
-    # number of strides per seq
-    N = len(sequence)//stride 
-    sequence = sequence[:(N*stride-n*stride)]
-    for i in range((N-n)-num_steps//stride):
-        start = i*stride
-        example = sequence[start: start + num_steps]
-        xs.append(
-            np.log10(np.absolute(example)**2) if normalize else example
-        )
-        ys.append(y)
-    ys = np.asarray(ys)
-    xs = np.asarray(xs)
-    return xs, ys
-    
-def calculate_norm(xs):
-    mean = np.mean(xs)
-    var  = np.var(xs)
-    return mean, var
-
-def calculate_norm_ds(ds, data_key):
-    x_train = []
-    for x in ds: x_train.append(x[data_key])
-    print(len(x_train), "num elements")
-    x_train = np.asarray(x_train)
-    x_train = x_train.reshape(
-        [-1, x[data_key].shape[1], x[data_key].shape[2], 1]
-    ) if len(x[data_key].shape) > 2 else x_train
-    return calculate_norm(x_train)
+def tf_counts(arr, x):
+    arr = tf.constant(arr)
+    return tf.where(arr == x).shape[0]
 
 def counts(arr, x):
     arr = np.asarray(arr)
@@ -564,31 +522,6 @@ def list_product(els):
     prod *= el
   return prod
 
-def get_counts(df, colname):
-    return pd.DataFrame.from_dict(
-        dict(
-            list(
-                map(
-                    lambda x: (x[0], len(x[1])), 
-                    df.groupby(colname)
-                )
-            )
-        ),
-        orient='index'
-    )
-
-def get_duplicates(array):
-    c = Counter(array)
-    return [k for k in c if c[k] > 1] 
-
-def get_duplicates_gen(array):
-    c = Counter()
-    seen = set()
-    for i in array: 
-        c[i] += 1
-        if c[i] > 1 and i not in seen:
-            seen.add(i)
-            yield i
 
 def np_arr_to_py(x):
     x = np.unstack()
@@ -751,18 +684,20 @@ index = lambda arr, elem: unlist(
     )
 )
 
-def create_empty_dirtree(srcdir, dstdir, onerror=None):
-    srcdir = os.path.abspath(srcdir)
-    srcdir_prefix = len(srcdir) + len(os.path.sep)
-    os.makedirs(dstdir, exist_ok=True)
-    for root, dirs, _ in os.walk(srcdir, onerror=onerror):
-        for dirname in dirs:
-            dirpath = os.path.join(dstdir, root[srcdir_prefix:], dirname)
-            try:
-                os.mkdir(dirpath)
-            except OSError as e:
-                if onerror is not None:
-                    onerror(e)
+def shuffle_npz(xs, ys):
+    """Shuffle numpy training arrays, assuming `xs` is training data
+        and `ys` is target data for classification of int valued targets.
+    xs: (batch, x, x)
+    ys: (batch,) integer valued targets
+    """
+    idx2tgt = dict(zip(list(range(len(xs))), ys))
+    df = pd.DataFrame({'index': list(idx2tgt), 'target': idx2tgt.values()})
+    df = shuffle(df, random_state=FLAGS['random_seed'])
+    new_x = np.stack(df['index'].apply(lambda i: xs[i]).values)
+    new_y = np.stack(df['index'].apply(lambda i: ys[i]).values)
+    del xs, ys
+    ## TODO: Add functionality to control class balance and keep even distributions!!
+    return new_x, new_y
 
 def copy_dirtree(inpath, outpath):
     def ignore_files(dir, files):
@@ -816,8 +751,17 @@ def is_pandas(x):
         pd.core.series.Series
     ]
 
+def onehot_targets_pd(df, _from='class', _to='target'):
+    if _from not in df.columns: raise ValueError("No column {} found.".format(_from))
+    t = df[_from].unique()
+    d = dict(zip(t, list(range(len(t)))))
+    df[_to] = df[_from].apply(lambda x: d[x])
+    df[_to] = df[_to].apply(lambda x: tf.one_hot(x, len(t)).numpy())
+    return df
+
 def find_and_replace(xs, e, r):
     return replace_at(xs, np.where(xs == e)[0], r)
+
 
 from itertools import zip_longest
 def groupl(iterable, n, padvalue=None):
@@ -919,6 +863,7 @@ def drop_none(x):
 ##############################################################################
 # Plotting Routines                                                          #
 ##############################################################################
+import matplotlib.pyplot as plt
 
 #Defaults for legible figures
 plt.rcParams['font.family'] = 'serif'
